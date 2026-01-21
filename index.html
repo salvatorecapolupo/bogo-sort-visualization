@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bogo Sort Visualization & Sonorization</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #1a1a1a;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+
+        h1 { margin-bottom: 5px; text-align: center;}
+        h3 { margin-top: 0; color: #aaa; font-weight: normal; font-size: 14px;}
+
+        /* Contenitore grafico */
+        #array-container {
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            height: 350px;
+            width: 80%; /* Più stretto perché ci sono poche barre */
+            border-bottom: 2px solid #555;
+            padding: 10px;
+            gap: 10px; /* Più spazio tra le barre */
+        }
+
+        /* Stile barra */
+        .bar {
+            background-color: #8a2be2;
+            width: 60px; /* Barre più larghe */
+            margin: 0 1px;
+            border-top-left-radius: 8px;
+            border-top-right-radius: 8px;
+            transition: height 0.2s ease, background-color 0.2s;
+            
+            /* Testo */
+            display: flex;
+            align-items: flex-end; 
+            justify-content: center;
+            padding-bottom: 10px;
+            font-size: 18px;
+            font-weight: bold;
+            box-shadow: 0px 0px 10px rgba(0,0,0,0.5);
+        }
+
+        /* Colori di stato */
+        .shuffling { background-color: #ff4757 !important; } /* Rosso: Errore/Mescolamento */
+        .checking { background-color: #eccc68 !important; color: #222; } /* Giallo: Controllo in corso */
+        .sorted { background-color: #2ed573 !important; } /* Verde: Ordinato */
+
+        /* Pannello controlli */
+        .controls {
+            margin-top: 30px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 15px;
+            background: #2c2c2c;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            min-width: 300px;
+        }
+
+        .buttons {
+            display: flex;
+            gap: 10px;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 14px;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            font-weight: 600;
+            transition: 0.2s;
+        }
+        
+        button:hover { filter: brightness(1.1); }
+        button:active { transform: scale(0.95); }
+        
+        #btn-gen { background-color: #3742fa; color: white; }
+        #btn-sort { background-color: #ff6b81; color: #fff; } /* Colore rosa/rosso per pericolo */
+        #btn-sound { background-color: #555; color: white; width: 120px;}
+        
+        #btn-sound.active { background-color: #ff4757; }
+
+        button:disabled { background-color: #444; color: #888; cursor: not-allowed; }
+
+        .stats {
+            font-size: 20px;
+            font-family: monospace;
+            background: #000;
+            padding: 10px 20px;
+            border-radius: 5px;
+            color: #2ed573;
+            border: 1px solid #444;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Bogo Sort 🎲</h1>
+    <h3>(L'arte di tentare a caso finché non funziona)</h3>
+
+    <div id="array-container"></div>
+
+    <div class="controls">
+        <div class="stats" id="counter">Tentativi: 0</div>
+
+        <div class="buttons">
+            <button onclick="generateArray()" id="btn-gen">Rigenera (Max 6)</button>
+            <button onclick="toggleSound()" id="btn-sound">Audio: OFF</button>
+            <button onclick="startBogoSort()" id="btn-sort">Tenta la fortuna</button>
+        </div>
+        
+        <div>
+            <label for="speed">Velocità del caos:</label>
+            <input type="range" id="speed" min="50" max="500" value="200">
+        </div>
+    </div>
+
+    <script>
+        // --- VARIABILI GLOBALI ---
+        const container = document.getElementById("array-container");
+        const btnSound = document.getElementById("btn-sound");
+        const btnSort = document.getElementById("btn-sort");
+        const btnGen = document.getElementById("btn-gen");
+        const speedInput = document.getElementById("speed");
+        const counterDiv = document.getElementById("counter");
+
+        let array = [];
+        const numBars = 6; // TENERE BASSO! 6! = 720 tentativi medi. 7! = 5040.
+        let audioCtx = null;
+        let isMuted = true;
+        let attempts = 0;
+        let isSorting = false; // Flag per fermare l'algoritmo se necessario
+
+        // --- AUDIO (Versione No-Clipping) ---
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+        }
+
+        function toggleSound() {
+            initAudio();
+            isMuted = !isMuted;
+            if (isMuted) {
+                btnSound.innerText = "Audio: OFF";
+                btnSound.classList.remove("active");
+            } else {
+                btnSound.innerText = "Audio: ON";
+                btnSound.classList.add("active");
+            }
+        }
+
+        function playNote(value, type = "sine", duration = 0.1) {
+            if (isMuted || !audioCtx) return;
+
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            osc.frequency.value = 200 + (value * 2);
+            osc.type = type; 
+
+            const now = audioCtx.currentTime;
+            
+            // Inviluppo anti-click
+            gainNode.gain.setValueAtTime(0, now);
+            gainNode.gain.linearRampToValueAtTime(0.05, now + 0.01); 
+            gainNode.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+            osc.start(now);
+            osc.stop(now + duration); 
+        }
+
+        // Suona un accordo caotico (più note insieme)
+        function playChaos(bars) {
+            if (isMuted || !audioCtx) return;
+            // Suona 3 note a caso dall'array corrente
+            for(let i=0; i<3; i++) {
+                let randomVal = parseInt(bars[Math.floor(Math.random() * bars.length)].innerText);
+                playNote(randomVal, "triangle", 0.15);
+            }
+        }
+
+        // --- UTILS ---
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        function getDelay() {
+            return 550 - speedInput.value; 
+        }
+
+        function generateArray() {
+            // Stop se sta girando
+            isSorting = false;
+            
+            container.innerHTML = "";
+            array = [];
+            attempts = 0;
+            counterDiv.innerText = `Tentativi: 0`;
+            
+            for (let i = 0; i < numBars; i++) {
+                let val = Math.floor(Math.random() * 200) + 50;
+                array.push(val);
+
+                const bar = document.createElement("div");
+                bar.classList.add("bar");
+                bar.style.height = `${val}px`;
+                bar.innerText = val;
+                container.appendChild(bar);
+            }
+            btnSort.disabled = false;
+        }
+
+        // --- LOGICA BOGO SORT ---
+
+        // Funzione Fisher-Yates Shuffle per mescolare il DOM
+        async function shuffleDOM(bars) {
+            // Mescoliamo i dati logici
+            let currentValues = [];
+            for(let b of bars) currentValues.push(parseInt(b.innerText));
+            
+            // Algoritmo di mescolamento
+            for (let i = currentValues.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [currentValues[i], currentValues[j]] = [currentValues[j], currentValues[i]];
+            }
+
+            // Applichiamo al DOM (Visualizzazione del Caos)
+            for(let i=0; i<bars.length; i++) {
+                bars[i].classList.add("shuffling"); // Rosso
+                bars[i].style.height = `${currentValues[i]}px`;
+                bars[i].innerText = currentValues[i];
+            }
+            
+            playChaos(bars); // SUONO CAOTICO
+            await sleep(getDelay());
+            
+            // Rimuovi rosso
+            for(let i=0; i<bars.length; i++) {
+                bars[i].classList.remove("shuffling");
+            }
+        }
+
+        // Controlla se è ordinato
+        async function checkSorted(bars) {
+            for (let i = 0; i < bars.length - 1; i++) {
+                // Colora di giallo mentre controlla
+                bars[i].classList.add("checking");
+                bars[i+1].classList.add("checking");
+                
+                let val1 = parseInt(bars[i].innerText);
+                let val2 = parseInt(bars[i+1].innerText);
+                
+                playNote(val1, "sine", 0.05); // Suonino breve di controllo
+                await sleep(getDelay() / 2);
+
+                if (val1 > val2) {
+                    // FALLIMENTO!
+                    bars[i].classList.remove("checking");
+                    bars[i+1].classList.remove("checking");
+                    return false; 
+                }
+                
+                // Successo parziale (lasciamo verde per ora? no, resetta al prossimo shuffle)
+                bars[i].classList.remove("checking");
+                bars[i].classList.add("sorted"); // Temporaneamente verde
+            }
+            // Ultimo elemento
+            bars[bars.length-1].classList.add("sorted");
+            return true;
+        }
+
+        async function startBogoSort() {
+            if (isSorting) return; // Evita doppi click
+            isSorting = true;
+            btnSort.disabled = true;
+            btnGen.disabled = true;
+
+            const bars = document.getElementsByClassName("bar");
+            let sorted = false;
+
+            while (!sorted && isSorting) {
+                // 1. Controllo
+                sorted = await checkSorted(bars);
+
+                if (sorted) {
+                    // VITTORIA!
+                    // Suonata finale trionfale
+                    if(!isMuted && audioCtx) {
+                         for(let k=0; k<bars.length; k++) {
+                             playNote(parseInt(bars[k].innerText), "sine", 0.1);
+                             await sleep(50);
+                         }
+                    }
+                    break;
+                } else {
+                    // FALLIMENTO -> Mescola
+                    // Rimuovi il verde temporaneo del controllo precedente
+                    for(let b of bars) b.classList.remove("sorted");
+                    
+                    attempts++;
+                    counterDiv.innerText = `Tentativi: ${attempts}`;
+                    
+                    await shuffleDOM(bars);
+                }
+            }
+
+            isSorting = false;
+            btnGen.disabled = false;
+            btnSort.disabled = false;
+        }
+
+        // Avvio iniziale
+        generateArray();
+
+    </script>
+</body>
+</html>
